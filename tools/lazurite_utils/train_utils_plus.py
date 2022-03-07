@@ -7,6 +7,7 @@
 import glob
 import os
 
+import numpy as np
 import torch
 import tqdm
 import time
@@ -25,6 +26,9 @@ def test_one_epoch(model, optimizer, test_loader, model_func, accumulated_iter,
         data_time = common_utils.AverageMeter()
         batch_time = common_utils.AverageMeter()
         forward_time = common_utils.AverageMeter()
+
+    all_loss = []
+    all_tb_dict = []
 
     for cur_it in range(total_it_each_epoch):
         end = time.time()
@@ -45,6 +49,8 @@ def test_one_epoch(model, optimizer, test_loader, model_func, accumulated_iter,
 
         forward_timer = time.time()
         cur_forward_time = forward_timer - data_timer
+
+        accumulated_iter += 1
 
         cur_batch_time = time.time() - end
         # average reduce
@@ -68,10 +74,15 @@ def test_one_epoch(model, optimizer, test_loader, model_func, accumulated_iter,
             tbar.set_postfix(disp_dict)
             tbar.refresh()
 
-            if tb_log is not None:
-                tb_log.add_scalar('test/loss', loss, accumulated_iter)
-                for key, val in tb_dict.items():
-                    tb_log.add_scalar('test/' + key, val, accumulated_iter)
+            all_loss.append(loss.item())
+            all_tb_dict.append(tb_dict)
+
+    if tb_log is not None:
+        tb_log.add_scalar('test/loss', np.array(all_loss).mean(), tbar.n)
+        for k, v in tb_dict.items():
+            mean_v = np.array([tb[k] for tb in all_tb_dict]).mean()
+            tb_log.add_scalar(f'test/{k}', mean_v, tbar.n)
+
     if rank == 0:
         pbar.close()
     return accumulated_iter
@@ -93,26 +104,20 @@ def train_model_with_test(model, optimizer, train_loader, test_loader, model_fun
                 cur_scheduler = lr_warmup_scheduler
             else:
                 cur_scheduler = lr_scheduler
-            # tmp no train
-            # accumulated_iter = train_one_epoch(
-            #     model, optimizer, train_loader, model_func,
-            #     lr_scheduler=cur_scheduler,
-            #     accumulated_iter=accumulated_iter, optim_cfg=optim_cfg,
-            #     rank=rank, tbar=tbar, tb_log=tb_log,
-            #     leave_pbar=(cur_epoch + 1 == total_epochs),
-            #     total_it_each_epoch=total_it_each_epoch,
-            #     dataloader_iter=dataloader_iter
-            # )
+
+            accumulated_iter = train_one_epoch(
+                model, optimizer, train_loader, model_func,
+                lr_scheduler=cur_scheduler,
+                accumulated_iter=accumulated_iter, optim_cfg=optim_cfg,
+                rank=rank, tbar=tbar, tb_log=tb_log,
+                leave_pbar=(cur_epoch + 1 == total_epochs),
+                total_it_each_epoch=total_it_each_epoch,
+                dataloader_iter=dataloader_iter
+            )
+
+            trained_epoch = cur_epoch + 1
 
             # save trained model
-            trained_epoch = cur_epoch + 1
-            if trained_epoch % test_interval == 0 and rank == 0:
-                test_one_epoch(
-                    model, optimizer, test_loader, model_func,
-                    accumulated_iter=accumulated_iter, rank=rank, tbar=tbar, tb_log=tb_log,
-                    leave_pbar=(cur_epoch + 1 == total_epochs)
-                )
-
             if trained_epoch % ckpt_save_interval == 0 and rank == 0:
 
                 ckpt_list = glob.glob(str(ckpt_save_dir / 'checkpoint_epoch_*.pth'))
@@ -125,4 +130,14 @@ def train_model_with_test(model, optimizer, train_loader, test_loader, model_fun
                 ckpt_name = ckpt_save_dir / ('checkpoint_epoch_%d' % trained_epoch)
                 save_checkpoint(
                     checkpoint_state(model, optimizer, trained_epoch, accumulated_iter), filename=ckpt_name,
+                )
+
+            """
+            test model
+            """
+            if trained_epoch % test_interval == 0 and rank == 0:
+                test_one_epoch(
+                    model, optimizer, test_loader, model_func,
+                    accumulated_iter=accumulated_iter, rank=rank, tbar=tbar, tb_log=tb_log,
+                    leave_pbar=(cur_epoch + 1 == total_epochs)
                 )
