@@ -45,7 +45,12 @@ class DemoDataset(DatasetTemplate):
 
     def __getitem__(self, index):
         if self.ext == '.bin':
-            points = np.fromfile(self.sample_file_list[index], dtype=np.float32).reshape(-1, 4)
+            if self.dataset_cfg.get("DATASET", None) == "NuScenesDataset":
+                points = np.fromfile(self.sample_file_list[index], dtype=np.float32).reshape(-1, 5)
+            elif self.dataset_cfg.get("DATASET", None) == "KittiDataset":
+                points = np.fromfile(self.sample_file_list[index], dtype=np.float32).reshape(-1, 4)
+            else:
+                raise NotImplementedError
         elif self.ext == '.npy':
             points = np.load(self.sample_file_list[index])
         else:
@@ -99,7 +104,7 @@ def main():
 
             V.draw_scenes(
                 points=data_dict['points'][:, 1:], ref_boxes=pred_dicts[0]['pred_boxes'],
-                ref_scores=pred_dicts[0]['pred_scores'], ref_labels=pred_dicts[0]['pred_labels']
+                ref_scores=pred_dicts[0]['pred_scores'], ref_labels=pred_dicts[0]['pred_labels'],
             )
 
             if not OPEN3D_FLAG:
