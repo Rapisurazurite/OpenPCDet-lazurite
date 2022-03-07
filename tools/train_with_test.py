@@ -183,8 +183,7 @@ def main():
         lr_warmup_scheduler=lr_warmup_scheduler,
         ckpt_save_interval=args.ckpt_save_interval,
         test_interval=args.test_interval,
-        max_ckpt_save_num=args.max_ckpt_save_num,
-        merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch
+        max_ckpt_save_num=args.max_ckpt_save_num
     )
 
     if hasattr(train_set, 'use_shared_memory') and train_set.use_shared_memory:

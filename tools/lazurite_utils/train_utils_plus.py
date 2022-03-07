@@ -15,13 +15,13 @@ from pcdet.utils import common_utils, commu_utils
 from tools.train_utils.train_utils import train_one_epoch, save_checkpoint, checkpoint_state
 
 
-def test_one_epoch(model, optimizer, train_loader, model_func, accumulated_iter,
-                   rank, tbar, total_it_each_epoch, dataloader_iter, tb_log=None, leave_pbar=False):
-    if total_it_each_epoch == len(train_loader):
-        dataloader_iter = iter(train_loader)
+def test_one_epoch(model, optimizer, test_loader, model_func, accumulated_iter,
+                   rank, tbar, tb_log=None, leave_pbar=False):
+    total_it_each_epoch = len(test_loader)
+    dataloader_iter = iter(test_loader)
 
     if rank == 0:
-        pbar = tqdm.tqdm(total=total_it_each_epoch, leave=leave_pbar, desc='train', dynamic_ncols=True)
+        pbar = tqdm.tqdm(total=total_it_each_epoch, leave=leave_pbar, desc='test', dynamic_ncols=True)
         data_time = common_utils.AverageMeter()
         batch_time = common_utils.AverageMeter()
         forward_time = common_utils.AverageMeter()
@@ -31,7 +31,7 @@ def test_one_epoch(model, optimizer, train_loader, model_func, accumulated_iter,
         try:
             batch = next(dataloader_iter)
         except StopIteration:
-            dataloader_iter = iter(train_loader)
+            dataloader_iter = iter(test_loader)
             batch = next(dataloader_iter)
             print('new iters')
 
@@ -79,16 +79,10 @@ def test_one_epoch(model, optimizer, train_loader, model_func, accumulated_iter,
 
 def train_model_with_test(model, optimizer, train_loader, test_loader, model_func, lr_scheduler, optim_cfg,
                           start_epoch, total_epochs, start_iter, rank, tb_log, ckpt_save_dir, train_sampler=None,
-                          lr_warmup_scheduler=None, ckpt_save_interval=1, test_interval=1, max_ckpt_save_num=50,
-                          merge_all_iters_to_one_epoch=False):
+                          lr_warmup_scheduler=None, ckpt_save_interval=1, test_interval=1, max_ckpt_save_num=50):
     accumulated_iter = start_iter
     with tqdm.trange(start_epoch, total_epochs, desc='epochs', dynamic_ncols=True, leave=(rank == 0)) as tbar:
         total_it_each_epoch = len(train_loader)
-        if merge_all_iters_to_one_epoch:
-            assert hasattr(train_loader.dataset, 'merge_all_iters_to_one_epoch')
-            train_loader.dataset.merge_all_iters_to_one_epoch(merge=True, epochs=total_epochs)
-            total_it_each_epoch = len(train_loader) // max(total_epochs, 1)
-
         dataloader_iter = iter(train_loader)
         for cur_epoch in tbar:
             if train_sampler is not None:
@@ -99,15 +93,16 @@ def train_model_with_test(model, optimizer, train_loader, test_loader, model_fun
                 cur_scheduler = lr_warmup_scheduler
             else:
                 cur_scheduler = lr_scheduler
-            accumulated_iter = train_one_epoch(
-                model, optimizer, train_loader, model_func,
-                lr_scheduler=cur_scheduler,
-                accumulated_iter=accumulated_iter, optim_cfg=optim_cfg,
-                rank=rank, tbar=tbar, tb_log=tb_log,
-                leave_pbar=(cur_epoch + 1 == total_epochs),
-                total_it_each_epoch=total_it_each_epoch,
-                dataloader_iter=dataloader_iter
-            )
+            # tmp no train
+            # accumulated_iter = train_one_epoch(
+            #     model, optimizer, train_loader, model_func,
+            #     lr_scheduler=cur_scheduler,
+            #     accumulated_iter=accumulated_iter, optim_cfg=optim_cfg,
+            #     rank=rank, tbar=tbar, tb_log=tb_log,
+            #     leave_pbar=(cur_epoch + 1 == total_epochs),
+            #     total_it_each_epoch=total_it_each_epoch,
+            #     dataloader_iter=dataloader_iter
+            # )
 
             # save trained model
             trained_epoch = cur_epoch + 1
@@ -115,11 +110,8 @@ def train_model_with_test(model, optimizer, train_loader, test_loader, model_fun
                 test_one_epoch(
                     model, optimizer, test_loader, model_func,
                     accumulated_iter=accumulated_iter, rank=rank, tbar=tbar, tb_log=tb_log,
-                    leave_pbar=(cur_epoch + 1 == total_epochs),
-                    total_it_each_epoch=total_it_each_epoch,
-                    dataloader_iter=dataloader_iter
+                    leave_pbar=(cur_epoch + 1 == total_epochs)
                 )
-
 
             if trained_epoch % ckpt_save_interval == 0 and rank == 0:
 
