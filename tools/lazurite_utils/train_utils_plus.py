@@ -17,7 +17,7 @@ from tools.train_utils.train_utils import train_one_epoch, save_checkpoint, chec
 
 
 def test_one_epoch(model, optimizer, test_loader, model_func, accumulated_iter,
-                   rank, tbar, tb_log=None, leave_pbar=False):
+                   rank, tbar, epoch, tb_log=None,leave_pbar=False):
     total_it_each_epoch = len(test_loader)
     dataloader_iter = iter(test_loader)
 
@@ -78,10 +78,10 @@ def test_one_epoch(model, optimizer, test_loader, model_func, accumulated_iter,
             all_tb_dict.append(tb_dict)
 
     if tb_log is not None:
-        tb_log.add_scalar('test/loss', np.array(all_loss).mean(), tbar.n)
+        tb_log.add_scalar('test/loss', np.array(all_loss).mean(), epoch)
         for k, v in tb_dict.items():
             mean_v = np.array([tb[k] for tb in all_tb_dict]).mean()
-            tb_log.add_scalar(f'test/{k}', mean_v, tbar.n)
+            tb_log.add_scalar(f'test/{k}', mean_v, epoch)
 
     if rank == 0:
         pbar.close()
@@ -138,6 +138,6 @@ def train_model_with_test(model, optimizer, train_loader, test_loader, model_fun
             if trained_epoch % test_interval == 0 and rank == 0:
                 test_one_epoch(
                     model, optimizer, test_loader, model_func,
-                    accumulated_iter=accumulated_iter, rank=rank, tbar=tbar, tb_log=tb_log,
+                    accumulated_iter=accumulated_iter, rank=rank, tbar=tbar, epoch=cur_epoch, tb_log=tb_log,
                     leave_pbar=(cur_epoch + 1 == total_epochs)
                 )
