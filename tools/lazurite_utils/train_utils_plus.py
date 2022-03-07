@@ -113,14 +113,14 @@ def train_model_with_test(model, optimizer, train_loader, test_loader, model_fun
             trained_epoch = cur_epoch + 1
             if trained_epoch % test_interval == 0 and rank == 0:
                 test_one_epoch(
-                    model, optimizer, train_loader, model_func,
-                    lr_scheduler=cur_scheduler,
-                    accumulated_iter=accumulated_iter, optim_cfg=optim_cfg,
-                    rank=rank, tbar=tbar, tb_log=tb_log,
+                    model, optimizer, test_loader, model_func,
+                    accumulated_iter=accumulated_iter, rank=rank, tbar=tbar, tb_log=tb_log,
                     leave_pbar=(cur_epoch + 1 == total_epochs),
                     total_it_each_epoch=total_it_each_epoch,
                     dataloader_iter=dataloader_iter
                 )
+
+
             if trained_epoch % ckpt_save_interval == 0 and rank == 0:
 
                 ckpt_list = glob.glob(str(ckpt_save_dir / 'checkpoint_epoch_*.pth'))
