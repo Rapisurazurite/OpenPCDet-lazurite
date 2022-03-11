@@ -1,16 +1,42 @@
+# 原版 centerpoint
 CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
 
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/kitti_dataset.yaml
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: ['placeholder']
+        AUG_CONFIG_LIST:
+            - NAME: gt_sampling
+              USE_ROAD_PLANE: True
+              DB_INFO_PATH:
+                  - kitti_dbinfos_train.pkl
+              PREPARE: {
+                 filter_by_min_points: ['Car:5', 'Pedestrian:5', 'Cyclist:5'],
+                 filter_by_difficulty: [-1],
+              }
 
+              SAMPLE_GROUPS: ['Car:15','Pedestrian:10', 'Cyclist:10']
+              NUM_POINT_FEATURES: 4
+              DATABASE_WITH_FAKELIDAR: False
+              REMOVE_EXTRA_WIDTH: [0.0, 0.0, 0.0]
+              LIMIT_WHOLE_SCENE: False
+
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x']
+
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.95, 1.05]
 MODEL:
     NAME: CenterPoint
 
     VFE:
-        NAME: DynMeanVFE
+        NAME: MeanVFE
 
     BACKBONE_3D:
-        NAME: VoxelResBackBone8x
+        NAME: VoxelBackBone8x
 
     MAP_TO_BEV:
         NAME: HeightCompression
@@ -19,12 +45,11 @@ MODEL:
     BACKBONE_2D:
         NAME: BaseBEVBackbone
 
-        # try deeper backbone
-        LAYER_NUMS: [5, 5]
-        LAYER_STRIDES: [1, 2]
-        NUM_FILTERS: [128, 256]
-        UPSAMPLE_STRIDES: [2, 4]
-        NUM_UPSAMPLE_FILTERS: [256, 256]
+        LAYER_NUMS: [5]
+        LAYER_STRIDES: [1]
+        NUM_FILTERS: [128]
+        UPSAMPLE_STRIDES: [2]
+        NUM_UPSAMPLE_FILTERS: [256]
 
     DENSE_HEAD:
         NAME: CenterHead
@@ -48,7 +73,7 @@ MODEL:
 
         TARGET_ASSIGNER_CONFIG:
             FEATURE_MAP_STRIDE: 4
-            NUM_MAX_OBJS: 500
+            NUM_MAX_OBJS: 100
             GAUSSIAN_OVERLAP: 0.1
             MIN_RADIUS: 2
 
@@ -61,7 +86,7 @@ MODEL:
         POST_PROCESSING:
             SCORE_THRESH: 0.1
             POST_CENTER_LIMIT_RANGE: [0, -40, -3, 70.4, 40, 1]
-            MAX_OBJ_PER_SAMPLE: 500
+            MAX_OBJ_PER_SAMPLE: 100
             NMS_CONFIG:
                 NMS_TYPE: nms_gpu
                 NMS_THRESH: 0.01
