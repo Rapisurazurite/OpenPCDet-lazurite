@@ -75,8 +75,8 @@ if __name__ == '__main__':
     try:
         for tb_file in tb_file_list:
             print("===========================================================")
-            print("Total records: {}".format(len(tb_file_list)))
             tb_data_df = read_tb_file(tb_file)
+            print("Total records: {}".format(len(tb_data_df)))
             tb_data_df['hard_R40'] = tb_data_df[aim_tags].mean(axis=1)
             data_df_t3 = tb_data_df.sort_values(by="hard_R40", ascending=False).head(3)
             data_df_t3 = data_df_t3[["step", "hard_R40", *aim_tags]]
