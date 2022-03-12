@@ -19,7 +19,7 @@ def find_result_tb_file(model_path: str, eval=False):
     if not eval:
         tb_path = os.path.join(model_path, "default", "tensorboard")
     else:
-        tb_path = os.path.join(model_path, "eval", "eval_all_default", "default", "tensorboard_val")
+        tb_path = os.path.join(model_path, "default", "eval", "eval_all_default", "default", "tensorboard_val")
     tb_path_list = glob.glob(os.path.join(tb_path, r"events.out.tfevents.*"))
     return tb_path_list
 
@@ -67,6 +67,7 @@ if __name__ == '__main__':
     cfg.EXP_GROUP_PATH = '/'.join(args.cfg_file.split('/')[1:-1])
     cfg.TAG = Path(args.cfg_file).stem
     output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG
+    print(output_dir)
     tb_file_list = find_result_tb_file(str(output_dir), eval=True)
 
     # find the best performance of model epoch
@@ -74,6 +75,7 @@ if __name__ == '__main__':
     try:
         for tb_file in tb_file_list:
             print("===========================================================")
+            print("Total records: {}".format(len(tb_file_list)))
             tb_data_df = read_tb_file(tb_file)
             tb_data_df['hard_R40'] = tb_data_df[aim_tags].mean(axis=1)
             data_df_t3 = tb_data_df.sort_values(by="hard_R40", ascending=False).head(3)
