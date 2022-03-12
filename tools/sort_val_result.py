@@ -7,10 +7,11 @@
 
 import os
 import glob
-import pickle
+import argparse
 from tensorboard.backend.event_processing import event_accumulator
 import pandas as pd
-
+from pathlib import Path
+from pcdet.config import cfg, cfg_from_yaml_file
 
 def find_result_tb_file(model_path: str, eval=False):
     if not os.path.exists(model_path):
@@ -52,6 +53,33 @@ def main():
 
 
 if __name__ == '__main__':
+    # set default config of pandas
     pd.set_option('display.max_columns', None)
     pd.set_option('display.max_rows', None)
-    main()
+
+    # parse args
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cfg_file", type=str, default="", required=True)
+    args = parser.parse_args()
+
+    # make the root dir of model path
+    cfg_from_yaml_file(args.cfg_file, cfg)
+    cfg.EXP_GROUP_PATH = '/'.join(args.cfg_file.split('/')[1:-1])
+    cfg.TAG = Path(args.cfg_file).stem
+    output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG
+    tb_file_list = find_result_tb_file(str(output_dir), eval=True)
+
+    # find the best performance of model epoch
+    aim_tags = ["Car_3d/hard_R40", "Pedestrian_3d/hard_R40", "Cyclist_3d/hard_R40"]
+    try:
+        for tb_file in tb_file_list:
+            print("===========================================================")
+            tb_data_df = read_tb_file(tb_file)
+            tb_data_df['hard_R40'] = tb_data_df[aim_tags].mean(axis=1)
+            data_df_t3 = tb_data_df.sort_values(by="hard_R40", ascending=False).head(3)
+            data_df_t3 = data_df_t3[["step", "hard_R40", *aim_tags]]
+            print(data_df_t3)
+            print("===========================================================")
+    except Exception as e:
+        print("Error:", e)
+        print("Jump the file:", tb_file)
