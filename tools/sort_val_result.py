@@ -17,9 +17,9 @@ def find_result_tb_file(model_path: str, eval=False):
     if not os.path.exists(model_path):
         raise FileNotFoundError("model path not found")
     if not eval:
-        tb_path = os.path.join(model_path, "default", "tensorboard")
+        tb_path = os.path.join(model_path, "tensorboard")
     else:
-        tb_path = os.path.join(model_path, "default", "eval", "eval_all_default", "default", "tensorboard_val")
+        tb_path = os.path.join(model_path, "eval", "eval_all_default", "default", "tensorboard_val")
     tb_path_list = glob.glob(os.path.join(tb_path, r"events.out.tfevents.*"))
     return tb_path_list
 
@@ -60,13 +60,15 @@ if __name__ == '__main__':
     # parse args
     parser = argparse.ArgumentParser()
     parser.add_argument("--cfg_file", type=str, default="", required=True)
+    parser.add_argument('--extra_tag', type=str, default='default', help='extra tag for this experiment')
+
     args = parser.parse_args()
 
     # make the root dir of model path
     cfg_from_yaml_file(args.cfg_file, cfg)
     cfg.EXP_GROUP_PATH = '/'.join(args.cfg_file.split('/')[1:-1])
     cfg.TAG = Path(args.cfg_file).stem
-    output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG
+    output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag
     print(output_dir)
     tb_file_list = find_result_tb_file(str(output_dir), eval=True)
 
