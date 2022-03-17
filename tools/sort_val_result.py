@@ -13,6 +13,7 @@ import pandas as pd
 from pathlib import Path
 from pcdet.config import cfg, cfg_from_yaml_file
 
+
 def find_result_tb_file(model_path: str, eval=False):
     if not os.path.exists(model_path):
         raise FileNotFoundError("model path not found")
@@ -30,10 +31,14 @@ def read_tb_file(file_path: str):
     keys = ea.Tags()["scalars"]
 
     data_df = pd.DataFrame(columns=["step", *keys])
-    for i in range(len(ea.Scalars(keys[0]))):
-        step = ea.Scalars(keys[0])[i].step
-        data_row = [step, *[ea.Scalars(key)[i].value for key in keys]]
-        data_df.loc[i] = data_row
+    try:
+        for i in range(len(ea.Scalars(keys[0]))):
+            step = ea.Scalars(keys[0])[i].step
+            data_row = [step, *[ea.Scalars(key)[i].value for key in keys]]
+            data_df.loc[i] = data_row
+    except:
+        print("error")
+        print("Jump file {}".format(file_path))
     return data_df
 
 
@@ -71,7 +76,6 @@ if __name__ == '__main__':
     output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag
     print(output_dir)
     tb_file_list = find_result_tb_file(str(output_dir), eval=True)
-
 
     print("[Hard]")
     # find the best performance of model epoch
