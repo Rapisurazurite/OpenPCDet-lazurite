@@ -76,34 +76,30 @@ if __name__ == '__main__':
     print("[Hard]")
     # find the best performance of model epoch
     aim_tags = ["Car_3d/hard_R40", "Pedestrian_3d/hard_R40", "Cyclist_3d/hard_R40"]
-    for tb_file in tb_file_list:
-        try:
-                print("===========================================================")
-                tb_data_df = read_tb_file(tb_file)
-                print("Total records: {}".format(len(tb_data_df)))
-                tb_data_df['hard_R40'] = tb_data_df[aim_tags].mean(axis=1)
-                data_df_t3 = tb_data_df.sort_values(by="hard_R40", ascending=False).head(3)
-                data_df_t3 = data_df_t3[["step", "hard_R40", *aim_tags]]
-                print(data_df_t3)
-                print("===========================================================")
-        except Exception as e:
-            print("Error:", e)
-            print("Jump the file:", tb_file)
 
+    tb_data_df_list = []
+    for tb_file in tb_file_list:
+        tb_data_df_list.append(read_tb_file(tb_file))
+    tb_data_df = pd.concat(tb_data_df_list, ignore_index=True)
+    print("===========================================================")
+    print("Total records: {}".format(len(tb_data_df)))
+    tb_data_df['hard_R40'] = tb_data_df[aim_tags].mean(axis=1)
+    data_df_t3 = tb_data_df.sort_values(by="hard_R40", ascending=False).head(3)
+    data_df_t3 = data_df_t3[["step", "hard_R40", *aim_tags]]
+    print(data_df_t3)
+    print("===========================================================")
 
     print("[Moderate]")
     # find the best performance of model epoch
     aim_tags = ["Car_3d/moderate_R40", "Pedestrian_3d/moderate_R40", "Cyclist_3d/moderate_R40"]
+    tb_data_df_list = []
     for tb_file in tb_file_list:
-        try:
-                print("===========================================================")
-                tb_data_df = read_tb_file(tb_file)
-                print("Total records: {}".format(len(tb_data_df)))
-                tb_data_df['moderate_R40'] = tb_data_df[aim_tags].mean(axis=1)
-                data_df_t3 = tb_data_df.sort_values(by="moderate_R40", ascending=False).head(3)
-                data_df_t3 = data_df_t3[["step", "moderate_R40", *aim_tags]]
-                print(data_df_t3)
-                print("===========================================================")
-        except Exception as e:
-            print("Error:", e)
-            print("Jump the file:", tb_file)
+        tb_data_df_list.append(read_tb_file(tb_file))
+    tb_data_df = pd.concat(tb_data_df_list, ignore_index=True)
+    print("===========================================================")
+    print("Total records: {}".format(len(tb_data_df)))
+    tb_data_df['moderate_R40'] = tb_data_df[aim_tags].mean(axis=1)
+    data_df_t3 = tb_data_df.sort_values(by="moderate_R40", ascending=False).head(3)
+    data_df_t3 = data_df_t3[["step", "moderate_R40", *aim_tags]]
+    print(data_df_t3)
+    print("===========================================================")
