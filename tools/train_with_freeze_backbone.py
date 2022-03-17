@@ -119,14 +119,16 @@ def main():
 
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=train_set)
     # freeze the model parameters except the dense head
+    freeze_layer_name = ["backbone_3d", "backbone_2d", "dense_head"]
     for layer_name, layer_para in model.named_parameters():
-        if layer_name.startswith('dense_head'):
-            print('Ignore the layer: %s' % layer_name)
-            continue
-        layer_para.requires_grad = False
-        print(
-            'freeze layer: %s, requires_grad: %s' % (layer_name, layer_para.requires_grad)
-        )
+        # freeze the layer if the layer is in the list
+        if any(layer_name.find(freeze_layer_name) != -1 for freeze_layer_name in freeze_layer_name):
+            layer_para.requires_grad = False
+            print(
+                'freeze layer: %s, requires_grad: %s' % (layer_name, layer_para.requires_grad)
+            )
+        else:
+            print("jump layer: %s, requires_grad: %s" % (layer_name, layer_para.requires_grad))
     if args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model.cuda()
