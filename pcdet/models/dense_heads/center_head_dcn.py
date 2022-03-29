@@ -41,7 +41,7 @@ class DeformableSeparateHead(nn.Module):
             fc_list.append(DConv(input_channels, output_channels, kernel_size=3, stride=1, padding=1, bias=True))
             fc = nn.Sequential(*fc_list)
             if 'hm' in cur_name:
-                fc[-1].bias.data.fill_(init_bias)
+                fc[-1].conv2.bias.data.fill_(init_bias)
             else:
                 for m in fc.modules():
                     if isinstance(m, nn.Conv2d):
