@@ -8,7 +8,6 @@ from ..model_utils import model_nms_utils
 from ..model_utils import centernet_utils
 from ...utils import loss_utils
 
-
 class DConv(nn.Module):
     def __init__(self, inplanes, planes, kernel_size=3, stride=1, padding=1, bias=False):
         super(DConv, self).__init__()
@@ -27,6 +26,13 @@ class DeformableSeparateHead(nn.Module):
         super().__init__()
         self.sep_head_dict = sep_head_dict
 
+        self.feature_adapt_cls = nn.Sequential(
+            DConv(input_channels, input_channels, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(input_channels))
+        self.feature_adapt_reg = nn.Sequential(
+            DConv(input_channels, input_channels, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(input_channels))
+
         for cur_name in self.sep_head_dict:
             output_channels = self.sep_head_dict[cur_name]['out_channels']
             num_conv = self.sep_head_dict[cur_name]['num_conv']
@@ -34,14 +40,15 @@ class DeformableSeparateHead(nn.Module):
             fc_list = []
             for k in range(num_conv - 1):
                 fc_list.append(nn.Sequential(
-                    DConv(input_channels, input_channels, kernel_size=3, stride=1, padding=1, bias=use_bias),
+                    nn.Conv2d(input_channels, input_channels, kernel_size=3, stride=1, padding=1, bias=use_bias),
                     nn.BatchNorm2d(input_channels),
                     nn.ReLU()
                 ))
-            fc_list.append(DConv(input_channels, output_channels, kernel_size=3, stride=1, padding=1, bias=True))
+            fc_list.append(
+                nn.Conv2d(input_channels, output_channels, kernel_size=3, stride=1, padding=1, bias=True))
             fc = nn.Sequential(*fc_list)
             if 'hm' in cur_name:
-                fc[-1].conv2.bias.data.fill_(init_bias)
+                fc[-1].bias.data.fill_(init_bias)
             else:
                 for m in fc.modules():
                     if isinstance(m, nn.Conv2d):
@@ -52,10 +59,17 @@ class DeformableSeparateHead(nn.Module):
             self.__setattr__(cur_name, fc)
 
     def forward(self, x):
+        center_feat = self.feature_adapt_cls(x)
+        reg_feat = self.feature_adapt_reg(x)
         ret_dict = {}
         for cur_name in self.sep_head_dict:
-            ret_dict[cur_name] = self.__getattr__(cur_name)(x)
-
+            if cur_name in ['hm', 'center', 'center_z']:
+                ret_dict[cur_name] = self.__getattr__(cur_name)(center_feat)
+            elif cur_name in ['dim', 'rot']:
+                ret_dict[cur_name] = self.__getattr__(cur_name)(reg_feat)
+            else:
+                print('Unknown head name:', cur_name)
+                raise NotImplementedError
         return ret_dict
 
 
