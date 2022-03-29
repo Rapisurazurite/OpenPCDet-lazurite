@@ -85,7 +85,7 @@ class DeformableCenterHead(nn.Module):
         assert total_classes == len(self.class_names), f'class_names_each_head={self.class_names_each_head}'
 
         self.shared_conv = nn.Sequential(
-            DConv(
+            nn.Conv2d(
                 input_channels, self.model_cfg.SHARED_CONV_CHANNEL, 3, stride=1, padding=1,
                 bias=self.model_cfg.get('USE_BIAS_BEFORE_NORM', False)
             ),
