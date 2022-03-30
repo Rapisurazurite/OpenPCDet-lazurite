@@ -1,35 +1,35 @@
+import numpy as np
 import torch
 import torch.nn as nn
 from .roi_head_template import RoIHeadTemplate
-from ...utils import common_utils, loss_utils
-
+from ...utils import common_utils, loss_utils, box_utils
 
 class CenterRCNNHead(RoIHeadTemplate):
     def __init__(self, input_channels, model_cfg, num_class=1, **kwargs):
         super().__init__(num_class=num_class, model_cfg=model_cfg)
         self.model_cfg = model_cfg
-
-        GRID_SIZE = self.model_cfg.ROI_GRID_POOL.GRID_SIZE
-        pre_channel = self.model_cfg.ROI_GRID_POOL.IN_CHANNEL * GRID_SIZE * GRID_SIZE
-
-        shared_fc_list = []
-        for k in range(0, self.model_cfg.SHARED_FC.__len__()):
-            shared_fc_list.extend([
-                nn.Conv1d(pre_channel, self.model_cfg.SHARED_FC[k], kernel_size=1, bias=False),
-                nn.BatchNorm1d(self.model_cfg.SHARED_FC[k]),
-                nn.ReLU()
-            ])
-            pre_channel = self.model_cfg.SHARED_FC[k]
-
-            if k != self.model_cfg.SHARED_FC.__len__() - 1 and self.model_cfg.DP_RATIO > 0:
-                shared_fc_list.append(nn.Dropout(self.model_cfg.DP_RATIO))
-
-        self.shared_fc_layer = nn.Sequential(*shared_fc_list)
-
-        self.iou_layers = self.make_fc_layers(
-            input_channels=pre_channel, output_channels=1, fc_list=self.model_cfg.IOU_FC
-        )
-        self.init_weights(weight_init='xavier')
+        #
+        # GRID_SIZE = self.model_cfg.ROI_GRID_POOL.GRID_SIZE
+        # pre_channel = self.model_cfg.ROI_GRID_POOL.IN_CHANNEL * GRID_SIZE * GRID_SIZE
+        #
+        # shared_fc_list = []
+        # for k in range(0, self.model_cfg.SHARED_FC.__len__()):
+        #     shared_fc_list.extend([
+        #         nn.Conv1d(pre_channel, self.model_cfg.SHARED_FC[k], kernel_size=1, bias=False),
+        #         nn.BatchNorm1d(self.model_cfg.SHARED_FC[k]),
+        #         nn.ReLU()
+        #     ])
+        #     pre_channel = self.model_cfg.SHARED_FC[k]
+        #
+        #     if k != self.model_cfg.SHARED_FC.__len__() - 1 and self.model_cfg.DP_RATIO > 0:
+        #         shared_fc_list.append(nn.Dropout(self.model_cfg.DP_RATIO))
+        #
+        # self.shared_fc_layer = nn.Sequential(*shared_fc_list)
+        #
+        # self.iou_layers = self.make_fc_layers(
+        #     input_channels=pre_channel, output_channels=1, fc_list=self.model_cfg.IOU_FC
+        # )
+        # self.init_weights(weight_init='xavier')
 
     def init_weights(self, weight_init='xavier'):
         if weight_init == 'kaiming':
@@ -50,64 +50,42 @@ class CenterRCNNHead(RoIHeadTemplate):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-    def roi_grid_pool(self, batch_dict):
+    def roi_edge_pool(self, batch_dict):
         """
         Args:
             batch_dict:
                 batch_size:
                 rois: (B, num_rois, 7 + C)
                 spatial_features_2d: (B, C, H, W)
-        Returns:
-
         """
         batch_size = batch_dict['batch_size']
-        rois = batch_dict['rois'].detach()
+        rois = batch_dict['rois'].detach() # (x, y, z, w, h, angle)
         spatial_features_2d = batch_dict['spatial_features_2d'].detach()
         height, width = spatial_features_2d.size(2), spatial_features_2d.size(3)
 
-        dataset_cfg = batch_dict['dataset_cfg']
+        dataset_cfg = self.model_cfg.DATASET_CONFIG
         min_x = dataset_cfg.POINT_CLOUD_RANGE[0]
         min_y = dataset_cfg.POINT_CLOUD_RANGE[1]
-        voxel_size_x = dataset_cfg.DATA_PROCESSOR[-1].VOXEL_SIZE[0]
-        voxel_size_y = dataset_cfg.DATA_PROCESSOR[-1].VOXEL_SIZE[1]
-        down_sample_ratio = self.model_cfg.ROI_GRID_POOL.DOWNSAMPLE_RATIO
+        voxel_size_x = dataset_cfg.VOXEL_SIZE[0]
+        voxel_size_y = dataset_cfg.VOXEL_SIZE[1]
+        down_sample_ratio = self.model_cfg.ROI_GRID_POOL.FEATURE_MAP_STRIDE
 
         pooled_features_list = []
         torch.backends.cudnn.enabled = False
+
         for b_id in range(batch_size):
-            # Map global boxes coordinates to feature map coordinates
-            x1 = (rois[b_id, :, 0] - rois[b_id, :, 3] / 2 - min_x) / (voxel_size_x * down_sample_ratio)
-            x2 = (rois[b_id, :, 0] + rois[b_id, :, 3] / 2 - min_x) / (voxel_size_x * down_sample_ratio)
-            y1 = (rois[b_id, :, 1] - rois[b_id, :, 4] / 2 - min_y) / (voxel_size_y * down_sample_ratio)
-            y2 = (rois[b_id, :, 1] + rois[b_id, :, 4] / 2 - min_y) / (voxel_size_y * down_sample_ratio)
+            corner = box_utils.boxes_to_corners_3d(rois[b_id])
+            corner_bev = corner[:, [0, 1, 2, 3], :-1]
+            edge_bev = [corner_bev[:,[0,1]].mean(dim=1),
+                        corner_bev[:,[1,2]].mean(dim=1),
+                        corner_bev[:,[2,3]].mean(dim=1),
+                        corner_bev[:,[3,0]].mean(dim=1)]
 
-            angle, _ = common_utils.check_numpy_to_torch(rois[b_id, :, 6])
+            edge_bev = torch.stack(edge_bev, dim=1) / (voxel_size_x * down_sample_ratio)
 
-            cosa = torch.cos(angle)
-            sina = torch.sin(angle)
 
-            theta = torch.stack((
-                (x2 - x1) / (width - 1) * cosa, (x2 - x1) / (width - 1) * (-sina), (x1 + x2 - width + 1) / (width - 1),
-                (y2 - y1) / (height - 1) * sina, (y2 - y1) / (height - 1) * cosa, (y1 + y2 - height + 1) / (height - 1)
-            ), dim=1).view(-1, 2, 3).float()
 
-            grid_size = self.model_cfg.ROI_GRID_POOL.GRID_SIZE
-            grid = nn.functional.affine_grid(
-                theta,
-                torch.Size((rois.size(1), spatial_features_2d.size(1), grid_size, grid_size))
-            )
 
-            pooled_features = nn.functional.grid_sample(
-                spatial_features_2d[b_id].unsqueeze(0).expand(rois.size(1), spatial_features_2d.size(1), height, width),
-                grid
-            )
-
-            pooled_features_list.append(pooled_features)
-
-        torch.backends.cudnn.enabled = True
-        pooled_features = torch.cat(pooled_features_list, dim=0)
-
-        return pooled_features
 
     def forward(self, batch_dict):
         """
@@ -117,10 +95,17 @@ class CenterRCNNHead(RoIHeadTemplate):
         targets_dict = self.proposal_layer(
             batch_dict, nms_config=self.model_cfg.NMS_CONFIG['TRAIN' if self.training else 'TEST']
         )
+
         if self.training:
             targets_dict = self.assign_targets(batch_dict)
             batch_dict['rois'] = targets_dict['rois']
             batch_dict['roi_labels'] = targets_dict['roi_labels']
+
+        self.roi_edge_pool(batch_dict)
+
+        return batch_dict
+
+
 
         # RoI aware pooling
         pooled_features = self.roi_grid_pool(batch_dict)  # (BxN, C, 7, 7)

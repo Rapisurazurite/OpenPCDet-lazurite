@@ -4,7 +4,7 @@ DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/kitti_dataset.yaml
 
 MODEL:
-    NAME: CenterPoint
+    NAME: CenterPointRCNN
 
     VFE:
         NAME: MeanVFE
@@ -57,18 +57,64 @@ MODEL:
                 'loc_weight': 2.0,
                 'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
             }
+
         POST_PROCESSING:
             SCORE_THRESH: 0.1
-            POST_CENTER_LIMIT_RANGE: [0, -40, -3, 70.4, 40, 1]
+            POST_CENTER_LIMIT_RANGE: [ -75.2, -75.2, -2, 75.2, 75.2, 4 ]
             MAX_OBJ_PER_SAMPLE: 500
             NMS_CONFIG:
                 NMS_TYPE: nms_gpu
-                NMS_THRESH: 0.01
+                NMS_THRESH: 0.7
                 NMS_PRE_MAXSIZE: 4096
-                NMS_POST_MAXSIZE: 500
+                NMS_POST_MAXSIZE: 512
 
     ROI_HEAD:
         NAME: CenterRCNNHead
+        CLASS_AGNOSTIC: True
+        DATASET_CONFIG:
+            POINT_CLOUD_RANGE: [0, -40, -3, 70.4, 40, 1]
+            VOXEL_SIZE: [0.05, 0.05, 0.1]
+        # choose the top 500 boxes
+        NMS_CONFIG:
+            TRAIN:
+                NMS_TYPE: nms_gpu
+                MULTI_CLASSES_NMS: False
+                NMS_PRE_MAXSIZE: 9000
+                NMS_POST_MAXSIZE: 512
+                NMS_THRESH: 0.8
+            TEST:
+                NMS_TYPE: nms_gpu
+                MULTI_CLASSES_NMS: False
+                NMS_PRE_MAXSIZE: 1024
+                NMS_POST_MAXSIZE: 100
+                NMS_THRESH: 0.7
+
+        ROI_GRID_POOL:
+            SOURCE: BEV
+            FEATURE_MAP_STRIDE: 4
+            INTERPOLATION: nearest
+
+        TARGET_CONFIG:
+            BOX_CODER: ResidualCoder
+            ROI_PER_IMAGE: 128
+            FG_RATIO: 0.5
+
+            SAMPLE_ROI_BY_EACH_CLASS: True
+            CLS_SCORE_TYPE: roi_iou
+
+            CLS_FG_THRESH: 0.75
+            CLS_BG_THRESH: 0.25
+            CLS_BG_THRESH_LO: 0.1
+            HARD_BG_RATIO: 0.8
+
+            REG_FG_THRESH: 0.55
+
+        LOSS_CONFIG:
+            POSTIVE_RATIO: 0.55
+            LOSS_WEIGHTS: {
+                'rcnn_iou_weight': 1.0,
+                'code_weights': [ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]
+            }
 
 
 
