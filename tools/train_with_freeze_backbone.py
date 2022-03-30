@@ -119,7 +119,7 @@ def main():
 
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=train_set)
     # freeze the model parameters except the dense head
-    freeze_layer_name = ["backbone_3d", "backbone_2d", "dense_head"]
+    freeze_layer_name = ["backbone_3d", "backbone_2d"]
     for layer_name, layer_para in model.named_parameters():
         # freeze the layer if the layer is in the list
         if any(layer_name.find(freeze_layer_name) != -1 for freeze_layer_name in freeze_layer_name):
