@@ -4,7 +4,7 @@ DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/kitti_dataset.yaml
 
 MODEL:
-    NAME: CenterPoint
+    NAME: CenterPointRCNN
 
     VFE:
         NAME: MeanVFE
@@ -59,17 +59,67 @@ MODEL:
             }
         POST_PROCESSING:
             SCORE_THRESH: 0.1
-            POST_CENTER_LIMIT_RANGE: [0, -40, -3, 70.4, 40, 1]
+            POST_CENTER_LIMIT_RANGE: [ 0, -40, -3, 70.4, 40, 1 ]
             MAX_OBJ_PER_SAMPLE: 500
             NMS_CONFIG:
                 NMS_TYPE: nms_gpu
-                NMS_THRESH: 0.01
+                NMS_THRESH: 0.8
                 NMS_PRE_MAXSIZE: 4096
                 NMS_POST_MAXSIZE: 500
 
+
+
     ROI_HEAD:
         NAME: CenterRCNNHead
+        CLASS_AGNOSTIC: True
 
+        SHARED_FC: [256, 256]
+        IOU_FC: [256, 256]
+        REG_FC: [256, 256]
+        DP_RATIO: 0.3
+
+        NMS_CONFIG:
+            TRAIN:
+                NMS_TYPE: nms_gpu
+                MULTI_CLASSES_NMS: False
+                NMS_PRE_MAXSIZE: 9000
+                NMS_POST_MAXSIZE: 512
+                NMS_THRESH: 0.8
+            TEST:
+                NMS_TYPE: nms_gpu
+                MULTI_CLASSES_NMS: False
+                NMS_PRE_MAXSIZE: 1024
+                NMS_POST_MAXSIZE: 100
+                NMS_THRESH: 0.7
+        BEV_FEATURE_EXTRACTOR:
+            IN_CHANNEL: 352
+            POINTS: 5
+
+        TARGET_CONFIG:
+            BOX_CODER: ResidualCoder
+            ROI_PER_IMAGE: 128
+            FG_RATIO: 0.5
+
+            SAMPLE_ROI_BY_EACH_CLASS: True
+            CLS_SCORE_TYPE: roi_iou
+
+            CLS_FG_THRESH: 0.75
+            CLS_BG_THRESH: 0.25
+            CLS_BG_THRESH_LO: 0.1
+            HARD_BG_RATIO: 0.8
+
+            REG_FG_THRESH: 0.55
+
+        LOSS_CONFIG:
+            CLS_LOSS: BinaryCrossEntropy
+            REG_LOSS: smooth-l1
+            CORNER_LOSS_REGULARIZATION: True
+            LOSS_WEIGHTS: {
+                'rcnn_cls_weight': 1.0,
+                'rcnn_reg_weight': 1.0,
+                'rcnn_corner_weight': 1.0,
+                'code_weights': [ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]
+            }
 
 
     POST_PROCESSING:

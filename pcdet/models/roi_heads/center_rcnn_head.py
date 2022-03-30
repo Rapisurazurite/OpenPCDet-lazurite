@@ -1,17 +1,45 @@
 import torch
 import torch.nn as nn
 from .roi_head_template import RoIHeadTemplate
-from ...utils import common_utils, loss_utils
+from ...utils import common_utils, loss_utils, box_utils, box_coder_utils
 
+def bilinear_interpolate_torch(im, x, y):
+    """
+    Args:
+        im: (H, W, C) [y, x]
+        x: (N)
+        y: (N)
+    Returns:
+    """
+    x0 = torch.floor(x).long()
+    x1 = x0 + 1
+
+    y0 = torch.floor(y).long()
+    y1 = y0 + 1
+
+    x0 = torch.clamp(x0, 0, im.shape[1] - 1)
+    x1 = torch.clamp(x1, 0, im.shape[1] - 1)
+    y0 = torch.clamp(y0, 0, im.shape[0] - 1)
+    y1 = torch.clamp(y1, 0, im.shape[0] - 1)
+
+    Ia = im[y0, x0]
+    Ib = im[y1, x0]
+    Ic = im[y0, x1]
+    Id = im[y1, x1]
+
+    wa = (x1.type_as(x) - x) * (y1.type_as(y) - y)
+    wb = (x1.type_as(x) - x) * (y - y0.type_as(y))
+    wc = (x - x0.type_as(x)) * (y1.type_as(y) - y)
+    wd = (x - x0.type_as(x)) * (y - y0.type_as(y))
+    ans = torch.t((torch.t(Ia) * wa)) + torch.t(torch.t(Ib) * wb) + torch.t(torch.t(Ic) * wc) + torch.t(torch.t(Id) * wd)
+    return ans
 
 class CenterRCNNHead(RoIHeadTemplate):
     def __init__(self, input_channels, model_cfg, num_class=1, **kwargs):
         super().__init__(num_class=num_class, model_cfg=model_cfg)
         self.model_cfg = model_cfg
 
-        GRID_SIZE = self.model_cfg.ROI_GRID_POOL.GRID_SIZE
-        pre_channel = self.model_cfg.ROI_GRID_POOL.IN_CHANNEL * GRID_SIZE * GRID_SIZE
-
+        pre_channel = self.model_cfg.BEV_FEATURE_EXTRACTOR.IN_CHANNEL * 5
         shared_fc_list = []
         for k in range(0, self.model_cfg.SHARED_FC.__len__()):
             shared_fc_list.extend([
@@ -29,6 +57,21 @@ class CenterRCNNHead(RoIHeadTemplate):
         self.iou_layers = self.make_fc_layers(
             input_channels=pre_channel, output_channels=1, fc_list=self.model_cfg.IOU_FC
         )
+
+        reg_fc_list = []
+        for k in range(0, self.model_cfg.REG_FC.__len__()):
+            reg_fc_list.extend([
+                nn.Linear(pre_channel, self.model_cfg.REG_FC[k], bias=False),
+                nn.BatchNorm1d(self.model_cfg.REG_FC[k]),
+                nn.ReLU()
+            ])
+            pre_channel = self.model_cfg.REG_FC[k]
+
+            if k != self.model_cfg.REG_FC.__len__() - 1 and self.model_cfg.DP_RATIO > 0:
+                reg_fc_list.append(nn.Dropout(self.model_cfg.DP_RATIO))
+        self.reg_fc_layers = nn.Sequential(*reg_fc_list)
+        self.reg_pred_layer = nn.Linear(pre_channel, self.box_coder.code_size * self.num_class, bias=True)
+
         self.init_weights(weight_init='xavier')
 
     def init_weights(self, weight_init='xavier'):
@@ -50,7 +93,8 @@ class CenterRCNNHead(RoIHeadTemplate):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-    def roi_grid_pool(self, batch_dict):
+
+    def bev_feature_extractor(self, batch_dict):
         """
         Args:
             batch_dict:
@@ -58,56 +102,38 @@ class CenterRCNNHead(RoIHeadTemplate):
                 rois: (B, num_rois, 7 + C)
                 spatial_features_2d: (B, C, H, W)
         Returns:
-
+            features:
+                (B*N, C)
         """
         batch_size = batch_dict['batch_size']
         rois = batch_dict['rois'].detach()
         spatial_features_2d = batch_dict['spatial_features_2d'].detach()
         height, width = spatial_features_2d.size(2), spatial_features_2d.size(3)
 
-        dataset_cfg = batch_dict['dataset_cfg']
-        min_x = dataset_cfg.POINT_CLOUD_RANGE[0]
-        min_y = dataset_cfg.POINT_CLOUD_RANGE[1]
-        voxel_size_x = dataset_cfg.DATA_PROCESSOR[-1].VOXEL_SIZE[0]
-        voxel_size_y = dataset_cfg.DATA_PROCESSOR[-1].VOXEL_SIZE[1]
-        down_sample_ratio = self.model_cfg.ROI_GRID_POOL.DOWNSAMPLE_RATIO
-
-        pooled_features_list = []
+        min_x, min_y = 0, -40
+        voxel_size_x, voxel_size_y = 0.05, 0.05
+        down_sample_ratio = 4
+        features_list = []
         torch.backends.cudnn.enabled = False
         for b_id in range(batch_size):
-            # Map global boxes coordinates to feature map coordinates
-            x1 = (rois[b_id, :, 0] - rois[b_id, :, 3] / 2 - min_x) / (voxel_size_x * down_sample_ratio)
-            x2 = (rois[b_id, :, 0] + rois[b_id, :, 3] / 2 - min_x) / (voxel_size_x * down_sample_ratio)
-            y1 = (rois[b_id, :, 1] - rois[b_id, :, 4] / 2 - min_y) / (voxel_size_y * down_sample_ratio)
-            y2 = (rois[b_id, :, 1] + rois[b_id, :, 4] / 2 - min_y) / (voxel_size_y * down_sample_ratio)
-
-            angle, _ = common_utils.check_numpy_to_torch(rois[b_id, :, 6])
-
-            cosa = torch.cos(angle)
-            sina = torch.sin(angle)
-
-            theta = torch.stack((
-                (x2 - x1) / (width - 1) * cosa, (x2 - x1) / (width - 1) * (-sina), (x1 + x2 - width + 1) / (width - 1),
-                (y2 - y1) / (height - 1) * sina, (y2 - y1) / (height - 1) * cosa, (y1 + y2 - height + 1) / (height - 1)
-            ), dim=1).view(-1, 2, 3).float()
-
-            grid_size = self.model_cfg.ROI_GRID_POOL.GRID_SIZE
-            grid = nn.functional.affine_grid(
-                theta,
-                torch.Size((rois.size(1), spatial_features_2d.size(1), grid_size, grid_size))
-            )
-
-            pooled_features = nn.functional.grid_sample(
-                spatial_features_2d[b_id].unsqueeze(0).expand(rois.size(1), spatial_features_2d.size(1), height, width),
-                grid
-            )
-
-            pooled_features_list.append(pooled_features)
-
-        torch.backends.cudnn.enabled = True
-        pooled_features = torch.cat(pooled_features_list, dim=0)
-
-        return pooled_features
+            num_rois = rois[b_id].size(0)
+            corner_2d = box_utils.boxes_to_corners_3d(rois[b_id])[:, :4, :-1]
+            center_2d = rois[b_id, :, :2]
+            mid_corner_2d = [
+                corner_2d[:, [0,1]].mean(dim=1),
+                corner_2d[:, [1,2]].mean(dim=1),
+                corner_2d[:, [2,3]].mean(dim=1),
+                corner_2d[:, [3,0]].mean(dim=1),
+                center_2d
+            ]
+            mid_corner_2d = torch.stack(mid_corner_2d, dim=1)
+            mid_corner_2d_relative = (mid_corner_2d - torch.tensor([min_x, min_y]).cuda())/torch.tensor([voxel_size_x, voxel_size_y]).cuda()/down_sample_ratio
+            x, y = mid_corner_2d_relative[:, :, 0].flatten(), mid_corner_2d_relative[:, :, 1].flatten()
+            feature = bilinear_interpolate_torch(spatial_features_2d[b_id], x, y)
+            feature = feature.view(num_rois, -1)
+            features_list.append(feature)
+        features = torch.cat(features_list, dim=0)
+        return features
 
     def forward(self, batch_dict):
         """
@@ -123,11 +149,12 @@ class CenterRCNNHead(RoIHeadTemplate):
             batch_dict['roi_labels'] = targets_dict['roi_labels']
 
         # RoI aware pooling
-        pooled_features = self.roi_grid_pool(batch_dict)  # (BxN, C, 7, 7)
+        pooled_features = self.bev_feature_extractor(batch_dict)  # (BxN, C)
         batch_size_rcnn = pooled_features.shape[0]
 
         shared_features = self.shared_fc_layer(pooled_features.view(batch_size_rcnn, -1, 1))
         rcnn_iou = self.iou_layers(shared_features).transpose(1, 2).contiguous().squeeze(dim=1)  # (B*N, 1)
+        rcnn_reg = self.reg_pred_layer(self.reg_fc_layers(shared_features.squeeze(-1)))
 
         if not self.training:
             batch_dict['batch_cls_preds'] = rcnn_iou.view(batch_dict['batch_size'], -1, rcnn_iou.shape[-1])
@@ -135,10 +162,12 @@ class CenterRCNNHead(RoIHeadTemplate):
             batch_dict['cls_preds_normalized'] = False
         else:
             targets_dict['rcnn_iou'] = rcnn_iou
-
+            targets_dict['rcnn_reg'] = rcnn_reg
             self.forward_ret_dict = targets_dict
 
         return batch_dict
+
+
 
     def get_loss(self, tb_dict=None):
         tb_dict = {} if tb_dict is None else tb_dict
