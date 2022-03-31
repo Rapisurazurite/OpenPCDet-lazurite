@@ -43,20 +43,30 @@ class CenterRCNNHead(RoIHeadTemplate):
         shared_fc_list = []
         for k in range(0, self.model_cfg.SHARED_FC.__len__()):
             shared_fc_list.extend([
-                nn.Conv1d(pre_channel, self.model_cfg.SHARED_FC[k], kernel_size=1, bias=False),
+                nn.Linear(pre_channel, self.model_cfg.SHARED_FC[k], bias=False),
                 nn.BatchNorm1d(self.model_cfg.SHARED_FC[k]),
-                nn.ReLU()
+                nn.ReLU(inplace=True)
             ])
             pre_channel = self.model_cfg.SHARED_FC[k]
 
             if k != self.model_cfg.SHARED_FC.__len__() - 1 and self.model_cfg.DP_RATIO > 0:
                 shared_fc_list.append(nn.Dropout(self.model_cfg.DP_RATIO))
-
         self.shared_fc_layer = nn.Sequential(*shared_fc_list)
 
-        self.iou_layers = self.make_fc_layers(
-            input_channels=pre_channel, output_channels=1, fc_list=self.model_cfg.IOU_FC
-        )
+
+        cls_fc_list = []
+        for k in range(0, self.model_cfg.CLS_FC.__len__()):
+            cls_fc_list.extend([
+                nn.Linear(pre_channel, self.model_cfg.CLS_FC[k], bias=False),
+                nn.BatchNorm1d(self.model_cfg.CLS_FC[k]),
+                nn.ReLU()
+            ])
+            pre_channel = self.model_cfg.CLS_FC[k]
+
+            if k != self.model_cfg.CLS_FC.__len__() - 1 and self.model_cfg.DP_RATIO > 0:
+                cls_fc_list.append(nn.Dropout(self.model_cfg.DP_RATIO))
+        self.cls_fc_layers = nn.Sequential(*cls_fc_list)
+        self.cls_pred_layer = nn.Linear(pre_channel, self.num_class, bias=True)
 
         reg_fc_list = []
         for k in range(0, self.model_cfg.REG_FC.__len__()):
@@ -140,6 +150,13 @@ class CenterRCNNHead(RoIHeadTemplate):
         :param input_data: input dict
         :return:
         """
+
+        # dict_keys(['frame_id', 'gt_boxes', 'points', 'use_lead_xyz', 'voxels', 'voxel_coords', 'voxel_num_points',
+        #            'image_shape', 'batch_size', 'voxel_features', 'encoded_spconv_tensor',
+        #            'encoded_spconv_tensor_stride', 'multi_scale_3d_features', 'multi_scale_3d_strides',
+        #            'spatial_features', 'spatial_features_stride', 'spatial_features_2d', 'rois', 'roi_scores',
+        #            'roi_labels', 'has_class_labels'])
+
         targets_dict = self.proposal_layer(
             batch_dict, nms_config=self.model_cfg.NMS_CONFIG['TRAIN' if self.training else 'TEST']
         )
@@ -152,58 +169,34 @@ class CenterRCNNHead(RoIHeadTemplate):
         pooled_features = self.bev_feature_extractor(batch_dict)  # (BxN, C)
         batch_size_rcnn = pooled_features.shape[0]
 
-        shared_features = self.shared_fc_layer(pooled_features.view(batch_size_rcnn, -1, 1))
-        rcnn_iou = self.iou_layers(shared_features).transpose(1, 2).contiguous().squeeze(dim=1)  # (B*N, 1)
-        rcnn_reg = self.reg_pred_layer(self.reg_fc_layers(shared_features.squeeze(-1)))
+        shared_features = self.shared_fc_layer(pooled_features.view(batch_size_rcnn, -1))
+        rcnn_cls = self.cls_pred_layer(self.cls_fc_layers(shared_features))  # (B*N, 1)
+        rcnn_reg = self.reg_pred_layer(self.reg_fc_layers(shared_features))
 
         if not self.training:
-            batch_dict['batch_cls_preds'] = rcnn_iou.view(batch_dict['batch_size'], -1, rcnn_iou.shape[-1])
-            batch_dict['batch_box_preds'] = batch_dict['rois']
+            batch_cls_preds, batch_box_preds = self.generate_predicted_boxes(
+                batch_size=batch_dict['batch_size'], rois=batch_dict['rois'], cls_preds=rcnn_cls, box_preds=rcnn_reg
+            )
+            batch_dict['batch_cls_preds'] = batch_cls_preds
+            batch_dict['batch_box_preds'] = batch_box_preds
             batch_dict['cls_preds_normalized'] = False
         else:
-            targets_dict['rcnn_iou'] = rcnn_iou
+            targets_dict['rcnn_cls'] = rcnn_cls
             targets_dict['rcnn_reg'] = rcnn_reg
             self.forward_ret_dict = targets_dict
 
         return batch_dict
 
 
-    def get_loss(self, tb_dict=None):
-        tb_dict = {} if tb_dict is None else tb_dict
-        rcnn_loss = 0
-        rcnn_loss_cls, cls_tb_dict = self.get_box_iou_layer_loss(self.forward_ret_dict)
-        rcnn_loss += rcnn_loss_cls
-        tb_dict.update(cls_tb_dict)
-
-        rcnn_loss_reg, reg_tb_dict = self.get_box_reg_layer_loss(self.forward_ret_dict)
-        rcnn_loss += rcnn_loss_reg
-        tb_dict.update(reg_tb_dict)
-        tb_dict['rcnn_loss'] = rcnn_loss.item()
-        return rcnn_loss, tb_dict
-
-    def get_box_iou_layer_loss(self, forward_ret_dict):
-        loss_cfgs = self.model_cfg.LOSS_CONFIG
-        rcnn_iou = forward_ret_dict['rcnn_iou']
-        rcnn_iou_labels = forward_ret_dict['rcnn_cls_labels'].view(-1)
-        rcnn_iou_flat = rcnn_iou.view(-1)
-        if loss_cfgs.IOU_LOSS == 'BinaryCrossEntropy':
-            batch_loss_iou = nn.functional.binary_cross_entropy_with_logits(
-                rcnn_iou_flat,
-                rcnn_iou_labels.float(), reduction='none'
-            )
-        elif loss_cfgs.IOU_LOSS == 'L2':
-            batch_loss_iou = nn.functional.mse_loss(rcnn_iou_flat, rcnn_iou_labels, reduction='none')
-        elif loss_cfgs.IOU_LOSS == 'smoothL1':
-            diff = rcnn_iou_flat - rcnn_iou_labels
-            batch_loss_iou = loss_utils.WeightedSmoothL1Loss.smooth_l1_loss(diff, 1.0 / 9.0)
-        elif loss_cfgs.IOU_LOSS == 'focalbce':
-            batch_loss_iou = loss_utils.sigmoid_focal_cls_loss(rcnn_iou_flat, rcnn_iou_labels)
-        else:
-            raise NotImplementedError
-
-        iou_valid_mask = (rcnn_iou_labels >= 0).float()
-        rcnn_loss_iou = (batch_loss_iou * iou_valid_mask).sum() / torch.clamp(iou_valid_mask.sum(), min=1.0)
-
-        rcnn_loss_iou = rcnn_loss_iou * loss_cfgs.LOSS_WEIGHTS['rcnn_iou_weight']
-        tb_dict = {'rcnn_loss_iou': rcnn_loss_iou.item()}
-        return rcnn_loss_iou, tb_dict
+    # def get_loss(self, tb_dict=None):
+    #     tb_dict = {} if tb_dict is None else tb_dict
+    #     rcnn_loss = 0
+    #     rcnn_loss_cls, cls_tb_dict = self.get_box_iou_layer_loss(self.forward_ret_dict)
+    #     rcnn_loss += rcnn_loss_cls
+    #     tb_dict.update(cls_tb_dict)
+    #
+    #     rcnn_loss_reg, reg_tb_dict = self.get_box_reg_layer_loss(self.forward_ret_dict)
+    #     rcnn_loss += rcnn_loss_reg
+    #     tb_dict.update(reg_tb_dict)
+    #     tb_dict['rcnn_loss'] = rcnn_loss.item()
+    #     return rcnn_loss, tb_dict
