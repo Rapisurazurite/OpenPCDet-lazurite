@@ -6,7 +6,7 @@ from pcdet.utils import common_utils
 
 from .dataset import DatasetTemplate
 from .kitti.kitti_dataset import KittiDataset
-from .nuscenes.nuscenes_dataset import NuScenesDataset
+from .nuscenes.nuscenes_dataset_h5 import NuScenesDataset
 from .waymo.waymo_dataset import WaymoDataset
 from .pandaset.pandaset_dataset import PandasetDataset
 from .lyft.lyft_dataset import LyftDataset
@@ -69,7 +69,7 @@ def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None,
         sampler = None
     dataloader = DataLoader(
         dataset, batch_size=batch_size, pin_memory=True, num_workers=workers,
-        shuffle=(sampler is None) and training, collate_fn=dataset.collate_batch,
+        shuffle=False, collate_fn=dataset.collate_batch,
         drop_last=False, sampler=sampler, timeout=0
     )
 
