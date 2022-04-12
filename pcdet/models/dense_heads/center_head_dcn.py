@@ -7,19 +7,19 @@ from torch.nn.init import kaiming_normal_
 from ..model_utils import model_nms_utils
 from ..model_utils import centernet_utils
 from ...utils import loss_utils
+from .dcn import DeformableConv2d
 
-
-class DConv(nn.Module):
-    def __init__(self, inplanes, planes, kernel_size=3, stride=1, padding=1, bias=False):
-        super(DConv, self).__init__()
-        self.conv1 = nn.Conv2d(inplanes, 2 * kernel_size * kernel_size, kernel_size=kernel_size,
-                               stride=stride, padding=padding, bias=bias)
-        self.conv2 = DeformConv2d(inplanes, planes, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias)
-
-    def forward(self, x):
-        out = self.conv1(x)
-        out = self.conv2(x, out)
-        return out
+# class DConv(nn.Module):
+#     def __init__(self, inplanes, planes, kernel_size=3, stride=1, padding=1, bias=False):
+#         super(DConv, self).__init__()
+#         self.conv1 = nn.Conv2d(inplanes, 2 * kernel_size * kernel_size, kernel_size=kernel_size,
+#                                stride=stride, padding=padding, bias=bias)
+#         self.conv2 = DeformConv2d(inplanes, planes, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias)
+#
+#     def forward(self, x):
+#         out = self.conv1(x)
+#         out = self.conv2(x, out)
+#         return out
 
 
 class DeformableSeparateHead(nn.Module):
@@ -28,10 +28,22 @@ class DeformableSeparateHead(nn.Module):
         self.sep_head_dict = sep_head_dict
 
         self.feature_adapt_cls = nn.Sequential(
-            DConv(input_channels, input_channels, kernel_size=3, stride=1, padding=1, bias=False),
+            # DConv(input_channels, input_channels, kernel_size=3, stride=1, padding=1, bias=False),
+            DeformableConv2d(in_channels=input_channels,
+                             out_channels=input_channels,
+                             kernel_size=3,
+                             stride=1,
+                             padding=1,
+                             bias=use_bias),
             nn.BatchNorm2d(input_channels))
         self.feature_adapt_reg = nn.Sequential(
-            DConv(input_channels, input_channels, kernel_size=3, stride=1, padding=1, bias=False),
+            # DConv(input_channels, input_channels, kernel_size=3, stride=1, padding=1, bias=False),
+            DeformableConv2d(in_channels=input_channels,
+                             out_channels=input_channels,
+                             kernel_size=3,
+                             stride=1,
+                             padding=1,
+                             bias=use_bias),
             nn.BatchNorm2d(input_channels))
 
         for cur_name in self.sep_head_dict:
@@ -64,9 +76,9 @@ class DeformableSeparateHead(nn.Module):
         reg_feat = self.feature_adapt_reg(x)
         ret_dict = {}
         for cur_name in self.sep_head_dict:
-            if cur_name in ['hm']:
+            if cur_name in ['hm', 'center', 'center_z']:
                 ret_dict[cur_name] = self.__getattr__(cur_name)(center_feat)
-            elif cur_name in ['dim', 'rot', 'center', 'center_z']:
+            elif cur_name in ['dim', 'rot']:
                 ret_dict[cur_name] = self.__getattr__(cur_name)(reg_feat)
             else:
                 print('Unknown head name:', cur_name)
@@ -149,8 +161,7 @@ class DeformableCenterHead(nn.Module):
         x, y, z = gt_boxes[:, 0], gt_boxes[:, 1], gt_boxes[:, 2]
         coord_x = (x - self.point_cloud_range[0]) / self.voxel_size[0] / feature_map_stride
         coord_y = (y - self.point_cloud_range[1]) / self.voxel_size[1] / feature_map_stride
-        coord_x = torch.clamp(coord_x, min=0,
-                              max=feature_map_size[0] - 0.5)  # bugfixed: 1e-6 does not work for center.int()
+        coord_x = torch.clamp(coord_x, min=0, max=feature_map_size[0] - 0.5)  # bugfixed: 1e-6 does not work for center.int()
         coord_y = torch.clamp(coord_y, min=0, max=feature_map_size[1] - 0.5)  #
         center = torch.cat((coord_x[:, None], coord_y[:, None]), dim=-1)
         center_int = center.int()
