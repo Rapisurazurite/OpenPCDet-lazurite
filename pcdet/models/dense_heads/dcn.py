@@ -9,6 +9,7 @@ class DeformableConv2d(nn.Module):
                  kernel_size=3,
                  stride=1,
                  padding=1,
+                 offset_groups=1,
                  bias=False):
 
         super(DeformableConv2d, self).__init__()
@@ -20,7 +21,7 @@ class DeformableConv2d(nn.Module):
         self.padding = padding
         
         self.offset_conv = nn.Conv2d(in_channels, 
-                                     2 * kernel_size[0] * kernel_size[1],
+                                     2 * offset_groups * kernel_size[0] * kernel_size[1],
                                      kernel_size=kernel_size, 
                                      stride=stride,
                                      padding=self.padding, 
@@ -30,7 +31,7 @@ class DeformableConv2d(nn.Module):
         nn.init.constant_(self.offset_conv.bias, 0.)
         
         self.modulator_conv = nn.Conv2d(in_channels, 
-                                     1 * kernel_size[0] * kernel_size[1],
+                                     offset_groups * kernel_size[0] * kernel_size[1],
                                      kernel_size=kernel_size, 
                                      stride=stride,
                                      padding=self.padding, 
