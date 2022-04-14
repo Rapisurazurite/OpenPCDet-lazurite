@@ -2,15 +2,42 @@ CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
 
 DATA_CONFIG:
     _BASE_CONFIG_: cfgs/dataset_configs/kitti_dataset.yaml
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: ['placeholder']
+        AUG_CONFIG_LIST:
+            - NAME: gt_sampling
+              USE_ROAD_PLANE: True
+              DB_INFO_PATH:
+                  - kitti_dbinfos_train.pkl
+              PREPARE: {
+                 filter_by_min_points: ['Car:5', 'Pedestrian:5', 'Cyclist:5'],
+                 filter_by_difficulty: [-1],
+              }
+
+              SAMPLE_GROUPS: ['Car:15','Pedestrian:10', 'Cyclist:10']
+              NUM_POINT_FEATURES: 4
+              DATABASE_WITH_FAKELIDAR: False
+              REMOVE_EXTRA_WIDTH: [0.0, 0.0, 0.0]
+              LIMIT_WHOLE_SCENE: False
+
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x']
+
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.95, 1.05]
+
 
 MODEL:
-    NAME: CenterPointRCNN
+    NAME: PVRCNN
 
     VFE:
         NAME: MeanVFE
 
     BACKBONE_3D:
-        NAME: VoxelBackBone8x
+        NAME: VoxelResBackBone8x
 
     MAP_TO_BEV:
         NAME: HeightCompression
@@ -30,19 +57,19 @@ MODEL:
         CLASS_AGNOSTIC: False
 
         CLASS_NAMES_EACH_HEAD: [
-            [ 'Car', 'Pedestrian', 'Cyclist' ]
+            ['Car', 'Pedestrian', 'Cyclist']
         ]
 
         SHARED_CONV_CHANNEL: 64
         USE_BIAS_BEFORE_NORM: True
-        NUM_HM_CONV: 2 #  heatmap
+        NUM_HM_CONV: 2
         SEPARATE_HEAD_CFG:
-            HEAD_ORDER: ['center', 'center_z', 'dim', 'rot']
+            HEAD_ORDER: [ 'center', 'center_z', 'dim', 'rot' ]
             HEAD_DICT: {
-                'center': {'out_channels': 2, 'num_conv': 2}, # offset
-                'center_z': {'out_channels': 1, 'num_conv': 2},
-                'dim': {'out_channels': 3, 'num_conv': 2},
-                'rot': {'out_channels': 2, 'num_conv': 2},
+                'center': { 'out_channels': 2, 'num_conv': 2 },
+                'center_z': { 'out_channels': 1, 'num_conv': 2 },
+                'dim': { 'out_channels': 3, 'num_conv': 2 },
+                'rot': { 'out_channels': 2, 'num_conv': 2 },
             }
 
         TARGET_ASSIGNER_CONFIG:
@@ -55,26 +82,50 @@ MODEL:
             LOSS_WEIGHTS: {
                 'cls_weight': 1.0,
                 'loc_weight': 2.0,
-                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+                'code_weights': [ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]
             }
 
         POST_PROCESSING:
             SCORE_THRESH: 0.1
-            POST_CENTER_LIMIT_RANGE: [ -75.2, -75.2, -2, 75.2, 75.2, 4 ]
+            POST_CENTER_LIMIT_RANGE: [0, -40, -3, 70.4, 40, 1]
             MAX_OBJ_PER_SAMPLE: 500
             NMS_CONFIG:
                 NMS_TYPE: nms_gpu
                 NMS_THRESH: 0.7
                 NMS_PRE_MAXSIZE: 4096
-                NMS_POST_MAXSIZE: 512
+                NMS_POST_MAXSIZE: 500
+
+    PFE:
+        NAME: VoxelSetAbstraction
+        POINT_SOURCE: raw_points
+        NUM_KEYPOINTS: 2048
+        NUM_OUTPUT_FEATURES: 128
+        SAMPLE_METHOD: FPS
+
+        FEATURES_SOURCE: ['bev']
+
+    POINT_HEAD:
+        NAME: PointHeadSimple
+        CLS_FC: [256, 256]
+        CLASS_AGNOSTIC: True
+        USE_POINT_FEATURES_BEFORE_FUSION: True
+        TARGET_CONFIG:
+            GT_EXTRA_WIDTH: [0.2, 0.2, 0.2]
+        LOSS_CONFIG:
+            LOSS_REG: smooth-l1
+            LOSS_WEIGHTS: {
+                'point_cls_weight': 1.0,
+            }
 
     ROI_HEAD:
-        NAME: CenterRCNNHead
+        NAME: PVRCNNHead
         CLASS_AGNOSTIC: True
-        DATASET_CONFIG:
-            POINT_CLOUD_RANGE: [0, -40, -3, 70.4, 40, 1]
-            VOXEL_SIZE: [0.05, 0.05, 0.1]
-        # choose the top 500 boxes
+
+        SHARED_FC: [256, 256]
+        CLS_FC: [256, 256]
+        REG_FC: [256, 256]
+        DP_RATIO: 0.3
+
         NMS_CONFIG:
             TRAIN:
                 NMS_TYPE: nms_gpu
@@ -88,11 +139,19 @@ MODEL:
                 NMS_PRE_MAXSIZE: 1024
                 NMS_POST_MAXSIZE: 100
                 NMS_THRESH: 0.7
+#                SCORE_THRESH: 0.1
+
+#                NMS_PRE_MAXSIZE: 4096
+#                NMS_POST_MAXSIZE: 500
+#                NMS_THRESH: 0.85
+
 
         ROI_GRID_POOL:
-            SOURCE: BEV
-            FEATURE_MAP_STRIDE: 4
-            INTERPOLATION: nearest
+            GRID_SIZE: 6
+            MLPS: [[64, 64], [64, 64]]
+            POOL_RADIUS: [0.8, 1.6]
+            NSAMPLE: [16, 16]
+            POOL_METHOD: max_pool
 
         TARGET_CONFIG:
             BOX_CODER: ResidualCoder
@@ -110,13 +169,15 @@ MODEL:
             REG_FG_THRESH: 0.55
 
         LOSS_CONFIG:
-            POSTIVE_RATIO: 0.55
+            CLS_LOSS: BinaryCrossEntropy
+            REG_LOSS: smooth-l1
+            CORNER_LOSS_REGULARIZATION: True
             LOSS_WEIGHTS: {
-                'rcnn_iou_weight': 1.0,
-                'code_weights': [ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]
+                'rcnn_cls_weight': 1.0,
+                'rcnn_reg_weight': 1.0,
+                'rcnn_corner_weight': 1.0,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
             }
-
-
 
     POST_PROCESSING:
         RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
@@ -128,17 +189,17 @@ MODEL:
         NMS_CONFIG:
             MULTI_CLASSES_NMS: False
             NMS_TYPE: nms_gpu
-            NMS_THRESH: 0.01
+            NMS_THRESH: 0.1
             NMS_PRE_MAXSIZE: 4096
             NMS_POST_MAXSIZE: 500
 
 
 OPTIMIZATION:
-    BATCH_SIZE_PER_GPU: 1
+    BATCH_SIZE_PER_GPU: 2
     NUM_EPOCHS: 80
 
     OPTIMIZER: adam_onecycle
-    LR: 0.003
+    LR: 0.01
     WEIGHT_DECAY: 0.01
     MOMENTUM: 0.9
 
