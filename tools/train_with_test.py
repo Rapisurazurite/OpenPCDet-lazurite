@@ -32,7 +32,14 @@ def parse_config():
     parser.add_argument('--sync_bn', action='store_true', default=False, help='whether to use sync bn')
     parser.add_argument('--fix_random_seed', action='store_true', default=False, help='')
     parser.add_argument('--ckpt_save_interval', type=int, default=1, help='number of training epochs')
+
+    # add by Lazurite
+    parser.add_argument('--fine_tune', action='store_true', default=False, help='whether to fine tune')
+    parser.add_argument('--lr', type=float, default=None, help='learning rate')
     parser.add_argument('--test_interval', type=int, default=1, help='number of training epochs')
+    parser.add_argument('--epoch_to_test', type=int, default=40,
+                        help='if current epoch is larger than this value, loss will be evaluated')
+
     parser.add_argument('--local_rank', type=int, default=0, help='local rank for distributed training')
     parser.add_argument('--max_ckpt_save_num', type=int, default=30, help='max number of saved checkpoint')
     parser.add_argument('--merge_all_iters_to_one_epoch', action='store_true', default=False, help='')
@@ -58,6 +65,13 @@ def parse_config():
 
 def main():
     args, cfg = parse_config()
+    # add by Lazurite
+    if args.fine_tune:
+        assert args.lr is not None
+        cfg.OPTIMIZATION.OPTIMIZER = 'adam'
+        cfg.OPTIMIZATION.LR = args.lr
+        print('[INFO] Config Modified: LR = {}'.format(cfg.OPTIMIZATION.LR))
+
     if args.launcher == 'none':
         dist_train = False
         total_gpus = 1
@@ -134,7 +148,8 @@ def main():
         model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist_train, logger=logger)
 
     if args.ckpt is not None:
-        it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger)
+        it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer,
+                                                           logger=logger)
         last_epoch = start_epoch + 1
     else:
         ckpt_list = glob.glob(str(ckpt_dir / '*checkpoint_epoch_*.pth'))
@@ -158,26 +173,12 @@ def main():
     # -----------------------start training---------------------------
     logger.info('**********************Start training %s/%s(%s)**********************'
                 % (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
-    train_model_with_test(
-        model,
-        optimizer,
-        train_loader,
-        test_loader,
-        model_func=model_fn_decorator(),
-        lr_scheduler=lr_scheduler,
-        optim_cfg=cfg.OPTIMIZATION,
-        start_epoch=start_epoch,
-        total_epochs=args.epochs,
-        start_iter=it,
-        rank=cfg.LOCAL_RANK,
-        tb_log=tb_log,
-        ckpt_save_dir=ckpt_dir,
-        train_sampler=train_sampler,
-        lr_warmup_scheduler=lr_warmup_scheduler,
-        ckpt_save_interval=args.ckpt_save_interval,
-        test_interval=args.test_interval,
-        max_ckpt_save_num=args.max_ckpt_save_num
-    )
+    train_model_with_test(model, optimizer, train_loader, test_loader, model_func=model_fn_decorator(),
+                          lr_scheduler=lr_scheduler, optim_cfg=cfg.OPTIMIZATION, start_epoch=start_epoch,
+                          total_epochs=args.epochs, start_iter=it, rank=cfg.LOCAL_RANK, tb_log=tb_log,
+                          ckpt_save_dir=ckpt_dir, train_sampler=train_sampler, lr_warmup_scheduler=lr_warmup_scheduler,
+                          ckpt_save_interval=args.ckpt_save_interval, test_interval=args.test_interval,
+                          epoch_to_test=args.epoch_to_test, max_ckpt_save_num=args.max_ckpt_save_num)
 
     if hasattr(train_set, 'use_shared_memory') and train_set.use_shared_memory:
         train_set.clean_shared_memory()
@@ -195,7 +196,8 @@ def main():
     )
     eval_output_dir = output_dir / 'eval' / 'eval_with_train'
     eval_output_dir.mkdir(parents=True, exist_ok=True)
-    args.start_epoch = max(args.epochs - args.num_epochs_to_eval, 0)  # Only evaluate the last args.num_epochs_to_eval epochs
+    args.start_epoch = max(args.epochs - args.num_epochs_to_eval,
+                           0)  # Only evaluate the last args.num_epochs_to_eval epochs
 
     repeat_eval_ckpt(
         model.module if dist_train else model,

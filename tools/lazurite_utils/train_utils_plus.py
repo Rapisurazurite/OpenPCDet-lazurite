@@ -68,9 +68,36 @@ def test_one_epoch(model, optimizer, test_loader, model_func, rank, epoch, tb_lo
         pbar.close()
 
 
-def train_model_with_test(model, optimizer, train_loader, test_loader, model_func, lr_scheduler, optim_cfg,
-                          start_epoch, total_epochs, start_iter, rank, tb_log, ckpt_save_dir, train_sampler=None,
-                          lr_warmup_scheduler=None, ckpt_save_interval=1, test_interval=1, max_ckpt_save_num=50):
+def train_model_with_test(model, optimizer, train_loader, test_loader, model_func, lr_scheduler, optim_cfg, start_epoch,
+                          total_epochs, start_iter, rank, tb_log, ckpt_save_dir, train_sampler=None,
+                          lr_warmup_scheduler=None, ckpt_save_interval=1, test_interval=1, max_ckpt_save_num=50,
+                          epoch_to_test=40):
+    """
+    train model with test data
+    Args:
+        model:
+        optimizer:
+        train_loader:
+        test_loader:
+        model_func:
+        lr_scheduler:
+        optim_cfg:
+        start_epoch:
+        total_epochs:
+        start_iter:
+        rank:
+        tb_log:
+        ckpt_save_dir:
+        train_sampler:
+        lr_warmup_scheduler:
+        ckpt_save_interval:
+        test_interval: how many epochs to test one time
+        max_ckpt_save_num:
+        epoch_to_test: if current epoch is larger than epoch_to_test, loss of test data will be computed
+
+    Returns:
+
+    """
     accumulated_iter = start_iter
     with tqdm.trange(start_epoch, total_epochs, desc='epochs', dynamic_ncols=True, leave=(rank == 0)) as tbar:
         total_it_each_epoch = len(train_loader)
@@ -115,6 +142,6 @@ def train_model_with_test(model, optimizer, train_loader, test_loader, model_fun
             """
             test model
             """
-            if trained_epoch % test_interval == 0 and rank == 0:
+            if trained_epoch % test_interval == 0 and rank == 0 and trained_epoch >= epoch_to_test:
                 test_one_epoch(model, optimizer, test_loader, model_func, rank=rank, epoch=cur_epoch, tb_log=tb_log,
                                leave_pbar=(cur_epoch + 1 == total_epochs))
