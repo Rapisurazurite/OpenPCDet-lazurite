@@ -1,12 +1,8 @@
-from tools.lazurite_utils.train_utils_plus import train_model_with_test
-
-import _init_path
 import argparse
 import datetime
 import glob
 import os
 from pathlib import Path
-from test import repeat_eval_ckpt
 
 import torch
 import torch.nn as nn
@@ -16,8 +12,9 @@ from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_f
 from pcdet.datasets import build_dataloader
 from pcdet.models import build_network, model_fn_decorator
 from pcdet.utils import common_utils
+from test import repeat_eval_ckpt
+from tools.lazurite_utils.train_utils_plus import train_model_with_test
 from train_utils.optimization import build_optimizer, build_scheduler
-from train_utils.train_utils import train_model
 
 
 def parse_config():
