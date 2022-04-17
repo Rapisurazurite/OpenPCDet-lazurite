@@ -109,7 +109,7 @@ class VoxelBackBone8x(nn.Module):
         last_pad = 0
         last_pad = self.model_cfg.get('last_pad', last_pad)
         self.conv_out = spconv.SparseSequential(
-            # [200, 150, 5] -> [200, 150, 2]
+            # [200, 176, 5] -> [200, 150, 2]
             spconv.SparseConv3d(64, 128, (3, 1, 1), stride=(2, 1, 1), padding=last_pad,
                                 bias=False, indice_key='spconv_down2'),
             norm_fn(128),

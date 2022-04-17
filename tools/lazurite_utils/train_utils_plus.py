@@ -11,81 +11,61 @@ import numpy as np
 import torch
 import tqdm
 import time
+
+from pcdet.models import load_data_to_gpu
 from torch.nn.utils import clip_grad_norm_
 from pcdet.utils import common_utils, commu_utils
 from tools.train_utils.train_utils import train_one_epoch, save_checkpoint, checkpoint_state
 
 
-def test_one_epoch(model, optimizer, test_loader, model_func, accumulated_iter,
-                   rank, tbar, epoch, tb_log=None,leave_pbar=False):
+def test_one_epoch(model, optimizer, test_loader, model_func, rank, epoch, tb_log=None, leave_pbar=False):
     total_it_each_epoch = len(test_loader)
     dataloader_iter = iter(test_loader)
 
     if rank == 0:
         pbar = tqdm.tqdm(total=total_it_each_epoch, leave=leave_pbar, desc='test', dynamic_ncols=True)
-        data_time = common_utils.AverageMeter()
-        batch_time = common_utils.AverageMeter()
-        forward_time = common_utils.AverageMeter()
 
     all_loss = []
     all_tb_dict = []
 
-    for cur_it in range(total_it_each_epoch):
-        end = time.time()
-        try:
-            batch = next(dataloader_iter)
-        except StopIteration:
-            dataloader_iter = iter(test_loader)
-            batch = next(dataloader_iter)
-            print('new iters')
+    with torch.no_grad():
+        for cur_it in range(total_it_each_epoch):
+            try:
+                batch = next(dataloader_iter)
+            except StopIteration:
+                dataloader_iter = iter(test_loader)
+                batch = next(dataloader_iter)
+                print('new iters')
 
-        data_timer = time.time()
-        cur_data_time = data_timer - end
+            model.train()  # in order to get loss of test data
+            optimizer.zero_grad()
 
-        model.train()
-        optimizer.zero_grad()
+            # get model result and loss
+            loss, tb_dict, disp_dict = model_func(model, batch)
 
-        loss, tb_dict, disp_dict = model_func(model, batch)
+            # log to console and tensorboard
+            if rank == 0:
+                disp_dict.update({
+                    'loss': loss.item()
+                })
 
-        forward_timer = time.time()
-        cur_forward_time = forward_timer - data_timer
+                pbar.set_postfix(disp_dict)
+                pbar.update()
+                pbar.refresh()
 
-        accumulated_iter += 1
-
-        cur_batch_time = time.time() - end
-        # average reduce
-        avg_data_time = commu_utils.average_reduce_value(cur_data_time)
-        avg_forward_time = commu_utils.average_reduce_value(cur_forward_time)
-        avg_batch_time = commu_utils.average_reduce_value(cur_batch_time)
-
-        # log to console and tensorboard
-        if rank == 0:
-            data_time.update(avg_data_time)
-            forward_time.update(avg_forward_time)
-            batch_time.update(avg_batch_time)
-            disp_dict.update({
-                'loss': loss.item(), 'd_time': f'{data_time.val:.2f}({data_time.avg:.2f})',
-                'f_time': f'{forward_time.val:.2f}({forward_time.avg:.2f})',
-                'b_time': f'{batch_time.val:.2f}({batch_time.avg:.2f})'
-            })
-
-            pbar.update()
-            pbar.set_postfix(dict(total_it=accumulated_iter))
-            tbar.set_postfix(disp_dict)
-            tbar.refresh()
-
-            all_loss.append(loss.item())
-            all_tb_dict.append(tb_dict)
-
-    if tb_log is not None:
-        tb_log.add_scalar('test/loss', np.array(all_loss).mean(), epoch)
-        for k, v in tb_dict.items():
-            mean_v = np.array([tb[k] for tb in all_tb_dict]).mean()
-            tb_log.add_scalar(f'test/{k}', mean_v, epoch)
+                all_loss.append(loss.item())
+                all_tb_dict.append(tb_dict)
 
     if rank == 0:
+        if tb_log is not None:
+            mean_loss = np.array(all_loss).mean()
+            tb_log.add_scalar('test/loss', mean_loss, epoch)
+            for k, v in tb_dict.items():
+                mean_v = np.array([tb[k] for tb in all_tb_dict]).mean()
+                tb_log.add_scalar(f'test/{k}', mean_v, epoch)
+
+        pbar.write(f"epoch :{epoch}, test loss: {mean_loss}")
         pbar.close()
-    return accumulated_iter
 
 
 def train_model_with_test(model, optimizer, train_loader, test_loader, model_func, lr_scheduler, optim_cfg,
@@ -136,8 +116,5 @@ def train_model_with_test(model, optimizer, train_loader, test_loader, model_fun
             test model
             """
             if trained_epoch % test_interval == 0 and rank == 0:
-                test_one_epoch(
-                    model, optimizer, test_loader, model_func,
-                    accumulated_iter=accumulated_iter, rank=rank, tbar=tbar, epoch=cur_epoch, tb_log=tb_log,
-                    leave_pbar=(cur_epoch + 1 == total_epochs)
-                )
+                test_one_epoch(model, optimizer, test_loader, model_func, rank=rank, epoch=cur_epoch, tb_log=tb_log,
+                               leave_pbar=(cur_epoch + 1 == total_epochs))
