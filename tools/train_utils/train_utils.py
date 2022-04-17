@@ -20,11 +20,6 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
         forward_time = common_utils.AverageMeter()
 
     for cur_it in range(total_it_each_epoch):
-        # TODO: REMOVE IT
-        if cur_it >= 20:
-            break
-        # TODO: REMOVE IT
-
         end = time.time()
         try:
             batch = next(dataloader_iter)
