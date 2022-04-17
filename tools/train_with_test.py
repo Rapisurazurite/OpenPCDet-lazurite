@@ -37,7 +37,7 @@ def parse_config():
     parser.add_argument('--fine_tune', action='store_true', default=False, help='whether to fine tune')
     parser.add_argument('--lr', type=float, default=None, help='learning rate')
     parser.add_argument('--test_interval', type=int, default=1, help='number of training epochs')
-    parser.add_argument('--epoch_to_test', type=int, default=40,
+    parser.add_argument('--epoch_to_test', type=int, default=0,
                         help='if current epoch is larger than this value, loss will be evaluated')
 
     parser.add_argument('--local_rank', type=int, default=0, help='local rank for distributed training')
