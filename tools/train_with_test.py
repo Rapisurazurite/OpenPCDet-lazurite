@@ -1,3 +1,5 @@
+# 仅仅单卡可用
+
 import argparse
 import datetime
 import glob
@@ -66,6 +68,7 @@ def parse_config():
 def main():
     args, cfg = parse_config()
     # add by Lazurite
+    assert not args.launcher
     if args.fine_tune:
         assert args.lr is not None
         cfg.OPTIMIZATION.OPTIMIZER = 'adam'
