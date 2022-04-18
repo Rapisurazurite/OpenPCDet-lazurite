@@ -68,7 +68,7 @@ def parse_config():
 def main():
     args, cfg = parse_config()
     # add by Lazurite
-    assert not args.launcher
+    assert args.launcher == 'none', 'Multi-GPU training is not supported yet.'
     if args.fine_tune:
         assert args.lr is not None
         cfg.OPTIMIZATION.OPTIMIZER = 'adam'
